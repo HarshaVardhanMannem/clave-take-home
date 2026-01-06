@@ -1,0 +1,26 @@
+# Ignore files for Vercel deployment
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+*.log
+.env.local
+.env.*.local
+tests/
+docs/
+*.md
+!README.md
+
