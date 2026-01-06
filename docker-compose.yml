@@ -22,15 +22,6 @@ services:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - NVIDIA_MODEL=${NVIDIA_MODEL:-ai-nemotron-3-nano-30b-a3b}
       
-      # Grok/XAI API
-      - GROK_API_KEY=${GROK_API_KEY}
-      - GROK_MODEL=${GROK_MODEL:-grok-2}
-      - GROK_BASE_URL=${GROK_BASE_URL:-https://api.x.ai/v1}
-      
-      # JWT Authentication
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
-      
       # Server Settings
       - API_HOST=0.0.0.0
       - API_PORT=8000
