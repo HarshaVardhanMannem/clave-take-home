@@ -115,7 +115,9 @@ We use Supabase internally at Clave. This lets us evaluate:
    - Supabase schema (migrations or SQL files)
    - AI integration logic
    - Visualization components
-3. **README** with:
+3. **Documentation**:
+   - **Main README** (this file) - Project overview and quick start
+   - **[DATA_PIPELINE_DOCUMENTATION.md](./DATA_PIPELINE_DOCUMENTATION.md)** ⭐ - Comprehensive data cleaning, ingestion, and architecture documentation
    - Setup/installation instructions (including Supabase setup)
    - Data cleaning/normalization approach and database schema design
    - AI query parsing and visualization logic

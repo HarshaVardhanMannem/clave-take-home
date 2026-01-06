@@ -1,0 +1,166 @@
+{
+    "_note": "Database only contains data from January 1-4, 2025",
+    "sales_queries": [
+        {
+            "query": "What were total sales on January 2nd 2025?",
+            "intent": "sales_analysis",
+            "expected_tables": ["v_daily_sales_summary"],
+            "expected_viz": "table"
+        },
+        {
+            "query": "Show me revenue from Jan 1-4 2025",
+            "intent": "sales_analysis",
+            "expected_tables": ["v_daily_sales_summary"],
+            "expected_viz": "line_chart"
+        },
+        {
+            "query": "Total revenue for all available dates",
+            "intent": "sales_analysis",
+            "expected_tables": ["v_daily_sales_summary"],
+            "expected_viz": "table"
+        }
+    ],
+    "product_queries": [
+        {
+            "query": "Top 10 selling products",
+            "intent": "product_analysis",
+            "expected_tables": ["v_product_sales_summary"],
+            "expected_viz": "bar_chart"
+        },
+        {
+            "query": "What is our best selling item?",
+            "intent": "product_analysis",
+            "expected_tables": ["v_product_sales_summary"],
+            "expected_viz": "table"
+        },
+        {
+            "query": "Product sales breakdown by category",
+            "intent": "category_analysis",
+            "expected_tables": ["v_product_sales_summary"],
+            "expected_viz": "bar_chart"
+        }
+    ],
+    "location_queries": [
+        {
+            "query": "Compare revenue across all locations",
+            "intent": "location_comparison",
+            "expected_tables": ["v_daily_sales_summary"],
+            "expected_viz": "bar_chart"
+        },
+        {
+            "query": "Which location has the highest sales?",
+            "intent": "location_comparison",
+            "expected_tables": ["v_daily_sales_summary"],
+            "expected_viz": "bar_chart"
+        },
+        {
+            "query": "Downtown vs Airport performance",
+            "intent": "location_comparison",
+            "expected_tables": ["v_daily_sales_summary"],
+            "expected_viz": "bar_chart"
+        }
+    ],
+    "time_series_queries": [
+        {
+            "query": "What are our busiest hours?",
+            "intent": "time_series",
+            "expected_tables": ["v_hourly_sales_pattern"],
+            "expected_viz": "bar_chart"
+        },
+        {
+            "query": "Daily revenue trend from January 1-4 2025",
+            "intent": "time_series",
+            "expected_tables": ["v_daily_sales_summary"],
+            "expected_viz": "line_chart"
+        },
+        {
+            "query": "Sales pattern by day of week",
+            "intent": "time_series",
+            "expected_tables": ["v_hourly_sales_pattern"],
+            "expected_viz": "bar_chart"
+        }
+    ],
+    "payment_queries": [
+        {
+            "query": "Payment method breakdown",
+            "intent": "payment_analysis",
+            "expected_tables": ["unified_payments", "unified_orders"],
+            "expected_viz": "pie_chart"
+        },
+        {
+            "query": "Credit card vs cash sales",
+            "intent": "payment_analysis",
+            "expected_tables": ["unified_payments"],
+            "expected_viz": "pie_chart"
+        },
+        {
+            "query": "Average tip by payment type",
+            "intent": "payment_analysis",
+            "expected_tables": ["unified_payments"],
+            "expected_viz": "bar_chart"
+        }
+    ],
+    "order_type_queries": [
+        {
+            "query": "Compare dine-in vs delivery vs takeout",
+            "intent": "order_type_analysis",
+            "expected_tables": ["v_daily_sales_summary"],
+            "expected_viz": "bar_chart"
+        },
+        {
+            "query": "Delivery order percentage",
+            "intent": "order_type_analysis",
+            "expected_tables": ["v_daily_sales_summary"],
+            "expected_viz": "pie_chart"
+        }
+    ],
+    "source_queries": [
+        {
+            "query": "Toast vs DoorDash revenue comparison",
+            "intent": "source_comparison",
+            "expected_tables": ["v_daily_sales_summary"],
+            "expected_viz": "bar_chart"
+        },
+        {
+            "query": "Orders by source system",
+            "intent": "source_comparison",
+            "expected_tables": ["v_daily_sales_summary"],
+            "expected_viz": "bar_chart"
+        }
+    ],
+    "complex_queries": [
+        {
+            "query": "Top 5 products at the downtown location",
+            "intent": "product_analysis",
+            "expected_entities": {
+                "locations": ["DOWNTOWN"],
+                "limit": 5
+            }
+        },
+        {
+            "query": "Average order value by location and order type",
+            "intent": "performance_metrics",
+            "expected_tables": ["unified_orders", "unified_locations"]
+        },
+        {
+            "query": "Hourly sales trend for delivery orders",
+            "intent": "time_series",
+            "expected_entities": {
+                "order_types": ["DELIVERY"]
+            }
+        }
+    ],
+    "ambiguous_queries": [
+        {
+            "query": "Show me sales",
+            "needs_clarification": true,
+            "clarification_reason": "No time period specified"
+        },
+        {
+            "query": "Best product",
+            "needs_clarification": true,
+            "clarification_reason": "Unclear metric - by revenue or quantity?"
+        }
+    ]
+}
+
