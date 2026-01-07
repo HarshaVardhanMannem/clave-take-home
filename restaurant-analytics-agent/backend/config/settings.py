@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     
     # NVIDIA API (kept for backward compatibility, disabled when llm_provider != "nvidia")
     nvidia_api_key: str | None = None
-    nvidia_model: str = "ai-nemotron-3-nano-30b-a3b"
+    nvidia_model: str = "ai-nemotron-3-nano-30b-a3b"  # Updated: removed nvidia/ prefix
     
     # Grok/XAI API
     grok_api_key: str | None = None

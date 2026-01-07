@@ -4,6 +4,7 @@ Main entry point for the Restaurant Analytics Agent API
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -498,37 +499,50 @@ async def process_query(
                     logger.info(f"[{query_id}] Streaming: Stream complete")
                     
                     # Save query to history asynchronously (don't block response)
+                    # Wait a bit for visualization to complete before saving
                     if user_id:
-                        try:
-                            # Get final visualization type and config from cache or use defaults
-                            viz_type = VisualizationType.TABLE
-                            viz_config = {}
-                            if viz_applicable:
-                                cached_viz = await VisualizationCache.get(query_id)
-                                if cached_viz:
-                                    viz_type = VisualizationType(cached_viz.get("type", "table"))
-                                    viz_config = cached_viz.get("config", {})
-                            
-                            query_history_data = QueryHistoryCreate(
-                                query_id=query_id,
-                                user_id=user_id,
-                                natural_query=request.query,
-                                generated_sql=sql,
-                                intent=result.get("query_intent", QueryIntent.UNKNOWN).value,
-                                execution_time_ms=exec_time,
-                                result_count=len(formatted_results),
-                                results_sample=formatted_results[:10],
-                                columns=columns,
-                                visualization_type=viz_type.value,
-                                visualization_config=viz_config,
-                                answer=generated_answer,
-                                success=True,
-                                error_message=None
-                            )
-                            # Save asynchronously without blocking
-                            asyncio.create_task(QueryHistoryService.save_query(query_history_data))
-                        except Exception as e:
-                            logger.error(f"[{query_id}] Error saving query to history: {e}", exc_info=True)
+                        async def save_with_visualization():
+                            try:
+                                # Wait up to 10 seconds for visualization to be ready
+                                viz_type = VisualizationType.TABLE
+                                viz_config = {}
+                                if viz_applicable:
+                                    for _ in range(20):  # 20 * 0.5s = 10s max wait
+                                        status = await VisualizationCache.get_status(query_id)
+                                        if status in ("ready", "error", "not_applicable"):
+                                            break
+                                        await asyncio.sleep(0.5)
+                                    
+                                    cached_viz = await VisualizationCache.get(query_id)
+                                    if cached_viz:
+                                        viz_type = VisualizationType(cached_viz.get("type", "table"))
+                                        viz_config = cached_viz.get("config", {})
+                                        # Include chart_js_config in visualization_config for persistence
+                                        if cached_viz.get("chart_js_config"):
+                                            viz_config["chart_js_config"] = cached_viz["chart_js_config"]
+                                
+                                query_history_data = QueryHistoryCreate(
+                                    query_id=query_id,
+                                    user_id=user_id,
+                                    natural_query=request.query,
+                                    generated_sql=sql,
+                                    intent=result.get("query_intent", QueryIntent.UNKNOWN).value,
+                                    execution_time_ms=exec_time,
+                                    result_count=len(formatted_results),
+                                    results_sample=formatted_results[:10],
+                                    columns=columns,
+                                    visualization_type=viz_type.value,
+                                    visualization_config=viz_config,
+                                    answer=generated_answer,
+                                    success=True,
+                                    error_message=None
+                                )
+                                await QueryHistoryService.save_query(query_history_data)
+                            except Exception as e:
+                                logger.error(f"[{query_id}] Error saving query to history: {e}", exc_info=True)
+                        
+                        # Save asynchronously without blocking
+                        asyncio.create_task(save_with_visualization())
                 except Exception as e:
                     logger.error(f"[{query_id}] Error in streaming generator: {e}", exc_info=True)
                     error_data = {
@@ -717,11 +731,73 @@ async def get_visualization(query_id: str):
     """
     Fetch precomputed visualization for a query.
     Returns visualization data if available, or error if not ready/not applicable.
+    Falls back to database if cache is empty (e.g., after restart).
     """
     logger.info(f"Fetching visualization for query_id: {query_id}")
     
+    # First check cache
     status = await VisualizationCache.get_status(query_id)
+    viz_data = await VisualizationCache.get(query_id)
     
+    # If cache is empty but status exists, check database as fallback
+    if not viz_data and status != "not_applicable":
+        logger.info(f"[{query_id}] Cache miss, checking database for visualization")
+        try:
+            # Query database for saved visualization
+            result, _ = await SupabasePool.execute_query(
+                """
+                SELECT visualization_type, visualization_config, results_sample, columns
+                FROM query_history
+                WHERE query_id = $1
+                LIMIT 1
+                """,
+                query_id
+            )
+            
+            if result and result[0]:
+                row = result[0]
+                viz_config = row.get("visualization_config") or {}
+                
+                # Parse JSON string if needed (database may return string)
+                if isinstance(viz_config, str):
+                    try:
+                        viz_config = json.loads(viz_config) if viz_config else {}
+                    except json.JSONDecodeError:
+                        viz_config = {}
+                
+                # Check if chart_js_config is stored in visualization_config
+                chart_js_config = viz_config.get("chart_js_config")
+                
+                # If chart_js_config exists, restore to cache and return
+                if chart_js_config:
+                    logger.info(f"[{query_id}] Found visualization in database, restoring to cache")
+                    try:
+                        viz_type = VisualizationType(row["visualization_type"])
+                    except (ValueError, KeyError):
+                        viz_type = VisualizationType.TABLE
+                    
+                    # Restore to cache for future requests
+                    await VisualizationCache.store(
+                        query_id,
+                        viz_type,
+                        {k: v for k, v in viz_config.items() if k != "chart_js_config"},
+                        chart_js_config
+                    )
+                    await VisualizationCache.set_status(query_id, "ready")
+                    
+                    return VisualizationResponse(
+                        type=viz_type,
+                        config={k: v for k, v in viz_config.items() if k != "chart_js_config"},
+                        chart_js_config=chart_js_config
+                    )
+                else:
+                    # Visualization config exists but chart_js_config not stored (old records)
+                    logger.info(f"[{query_id}] Found visualization config in database but no chart_js_config")
+                    # Could regenerate here if needed, but for now return not found
+        except Exception as e:
+            logger.error(f"[{query_id}] Error checking database for visualization: {e}", exc_info=True)
+    
+    # Handle cache status responses
     if status == "not_applicable":
         return JSONResponse(
             status_code=404,
@@ -753,8 +829,7 @@ async def get_visualization(query_id: str):
             }
         )
     
-    viz_data = await VisualizationCache.get(query_id)
-    
+    # If still no viz_data, return not found
     if not viz_data:
         return JSONResponse(
             status_code=404,
