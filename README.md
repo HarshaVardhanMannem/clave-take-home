@@ -105,10 +105,10 @@ The frontend is built using Next.js 15 (stable) and supports streaming responses
 **Accuracy over Latency**
 
 * ~10–15 seconds total latency due to agentic workflow
-* ~3–5 seconds perceived latency via streaming
+* ~6–8 seconds perceived latency via streaming
 * Hallucination rate reduced to <5–10%
 
-This trade-off was intentional to prioritize correctness, safety, and production reliability over raw speed.
+This trade-off was intentional to prioritize correctness, safety, and production reliability over raw speed. Streaming responses improve perceived performance by 40-50% compared to waiting for the full response.
 
 ## Why Agentic Architecture for Production?
 

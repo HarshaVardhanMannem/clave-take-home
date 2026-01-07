@@ -647,10 +647,10 @@ To abstract latency away from end users, the system streams responses progressiv
 3. **Visualization Async:** Chart generated asynchronously, fetched separately when ready
 
 **Benefits:**
-- Users see results immediately (perceived latency: 3-5s vs. 10-15s)
+- Users see results immediately (perceived latency: 6-8s vs. 10-15s total)
 - Answer appears incrementally as it's generated
 - Visualization doesn't block initial response
-- Better UX despite high total latency
+- Better UX despite high total latency (40-50% improvement in perceived latency)
 
 **Similar Approach:** Google Gemini Chat uses similar streaming to handle agentic latency.
 
@@ -687,10 +687,10 @@ To abstract latency away from end users, the system streams responses progressiv
 
 ### 5. **Async Visualization & Streaming**
 - Visualization generated asynchronously after results returned
-- Streaming mode (`stream_answer: true`) returns results immediately (3-5s vs. 10-15s total)
+- Streaming mode (`stream_answer: true`) returns results immediately (6-8s perceived vs. 10-15s total)
 - Answer chunks streamed progressively as generated
 - Visualization fetched separately when ready
-- **Improves perceived performance by 60%** (users see results much earlier)
+- **Improves perceived performance by 40-50%** (users see results much earlier)
 
 ### 6. **Singleton Agent Runner**
 - Agent framework initialized once at startup
@@ -927,8 +927,8 @@ The multi-agent architecture significantly reduces hallucinations by:
 
 **Accuracy vs. Latency:**
 - **Accuracy:** <5-10% hallucination rate, 95%+ success rate
-- **Latency:** 10-15 seconds total (3-5s perceived with streaming)
-- **Mitigation:** Streaming responses abstract latency away from users
+- **Latency:** 10-15 seconds total (6-8s perceived with streaming)
+- **Mitigation:** Streaming responses improve perceived latency by 40-50%
 
 **Similar Systems:**
 - Google Gemini Chat experiences similar latency due to agentic nature
