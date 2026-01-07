@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -16,9 +16,11 @@ import {
 } from 'chart.js';
 import { Bar, Line, Pie, Doughnut } from 'react-chartjs-2';
 import { QueryResponse, VisualizationType } from '@/types/api';
+import { fetchVisualization } from '@/lib/api';
 import { 
   X, Copy, Check, ChevronDown, ChevronUp, Download, 
-  Table, BarChart3, Database, Lightbulb, Clock
+  Table, BarChart3, Database, Lightbulb, Clock, Eye, Loader2, Sparkles, 
+  TrendingUp, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import MetricCard from './MetricCard';
@@ -39,6 +41,7 @@ ChartJS.register(
 interface ChartWidgetProps {
   widget: { id: string; query: string; response: QueryResponse };
   onRemove?: (id: string) => void;
+  onUpdate?: (id: string, updates: Partial<QueryResponse>) => void;
 }
 
 // Helper to detect if result is a single metric
@@ -91,11 +94,53 @@ function getMetricIcon(columnName: string): 'dollar' | 'orders' | 'users' | 'sto
   return 'items';
 }
 
-export default function ChartWidget({ widget, onRemove }: ChartWidgetProps) {
+export default function ChartWidget({ widget, onRemove, onUpdate }: ChartWidgetProps) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [showSQL, setShowSQL] = useState(false);
+  const [loadingViz, setLoadingViz] = useState(false);
+  const [vizError, setVizError] = useState<string | null>(null);
+  const [vizLoaded, setVizLoaded] = useState(false);
   const { response } = widget;
+  const prevChartConfigRef = useRef(response.visualization?.chart_js_config);
+  
+  // Track when visualization loads for animation
+  useEffect(() => {
+    const currentChartConfig = response.visualization?.chart_js_config;
+    const prevChartConfig = prevChartConfigRef.current;
+    
+    if (currentChartConfig && !prevChartConfig) {
+      // Visualization just loaded
+      setTimeout(() => setVizLoaded(true), 100);
+      // Clear after animation
+      setTimeout(() => setVizLoaded(false), 3000);
+    }
+    
+    prevChartConfigRef.current = currentChartConfig;
+  }, [response.visualization?.chart_js_config]);
+  
+  // Determine if button should be shown
+  // Hide button if:
+  // - No query_id
+  // - Chart already loaded
+  // - Status is 'not_applicable' (explicitly not applicable)
+  // - Available is explicitly false
+  const shouldShowButton = response.query_id && 
+    !response.visualization?.chart_js_config && 
+    response.visualization?.status !== 'not_applicable' &&
+    response.visualization?.status !== 'error' &&
+    (response.visualization?.available !== false);
+  
+  if (response.query_id && !response.visualization?.chart_js_config) {
+    console.log('[ChartWidget] Visualization state:', {
+      query_id: response.query_id,
+      available: response.visualization?.available,
+      status: response.visualization?.status,
+      has_chart_js_config: !!response.visualization?.chart_js_config,
+      type: response.visualization?.type,
+      shouldShowButton
+    });
+  }
 
   const chartData = useMemo(() => {
     if (!response.visualization?.chart_js_config) {
@@ -140,6 +185,109 @@ export default function ChartWidget({ widget, onRemove }: ChartWidgetProps) {
     a.download = `${widget.query.slice(0, 30).replace(/[^a-z0-9]/gi, '_')}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleViewVisualization = async () => {
+    console.log('[ChartWidget] handleViewVisualization called', {
+      query_id: response.query_id,
+      widget_id: widget.id,
+      has_onUpdate: !!onUpdate
+    });
+    
+    if (!response.query_id) {
+      console.warn('[ChartWidget] No query_id available');
+      return;
+    }
+    
+    setLoadingViz(true);
+    setVizError(null);
+    
+    try {
+      // Poll for visualization until ready
+      let attempts = 0;
+      const maxAttempts = 30; // 30 seconds max
+      
+      while (attempts < maxAttempts) {
+        try {
+          console.log(`[ChartWidget] Fetching visualization (attempt ${attempts + 1}/${maxAttempts})`);
+          const vizData = await fetchVisualization(response.query_id);
+          
+          console.log('[ChartWidget] Visualization fetched successfully:', {
+            type: vizData.type,
+            has_config: !!vizData.config,
+            has_chart_js_config: !!vizData.chart_js_config
+          });
+          
+          // Update widget with visualization via callback
+          if (onUpdate) {
+            console.log('[ChartWidget] Calling onUpdate with visualization data');
+            onUpdate(widget.id, {
+              visualization: {
+                type: vizData.type as VisualizationType,
+                config: vizData.config || {},
+                chart_js_config: vizData.chart_js_config,
+                available: true,
+                status: 'ready',
+              },
+            });
+          } else {
+            console.warn('[ChartWidget] onUpdate callback not available');
+          }
+          
+          setLoadingViz(false);
+          return;
+        } catch (error: any) {
+          console.log('[ChartWidget] Error fetching visualization:', {
+            status: error.response?.status,
+            error_code: error.response?.data?.error_code,
+            message: error.response?.data?.error_message || error.message
+          });
+          
+          if (error.response?.status === 202) {
+            // Still pending, wait and retry
+            attempts++;
+            console.log(`[ChartWidget] Visualization pending, retrying in 1s (${attempts}/${maxAttempts})`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          } else if (error.response?.status === 404) {
+            const errorCode = error.response?.data?.error_code;
+            if (errorCode === 'VISUALIZATION_NOT_APPLICABLE') {
+              console.log('[ChartWidget] Visualization not applicable');
+              setVizError('A chart isn\'t available for this type of data');
+              // Update widget to mark visualization as not applicable
+              if (onUpdate) {
+                onUpdate(widget.id, {
+                  visualization: {
+                    ...response.visualization,
+                    status: 'not_applicable',
+                    available: false,
+                  },
+                });
+              }
+              setLoadingViz(false);
+              return;
+            } else if (errorCode === 'VISUALIZATION_NOT_FOUND') {
+              // Visualization not found - might still be generating
+              attempts++;
+              console.log(`[ChartWidget] Visualization not found, retrying in 1s (${attempts}/${maxAttempts})`);
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              continue;
+            }
+          }
+          
+          // For other errors, throw to outer catch
+          throw error;
+        }
+      }
+      
+      console.warn('[ChartWidget] Visualization generation timed out');
+      setVizError('Visualization generation timed out. Please try again.');
+      setLoadingViz(false);
+    } catch (error: any) {
+      console.error('[ChartWidget] Fatal error fetching visualization:', error);
+      setVizError(error.response?.data?.error_message || error.message || 'Failed to load visualization');
+      setLoadingViz(false);
+    }
   };
 
   const renderChart = () => {
@@ -257,21 +405,66 @@ export default function ChartWidget({ widget, onRemove }: ChartWidgetProps) {
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-hidden hover:shadow-medium hover-lift transition-all duration-300">
+    <div className="bg-white rounded-2xl shadow-soft border border-gray-100 overflow-hidden hover:shadow-medium hover-lift transition-all duration-300 group">
       {/* Header */}
-      <div className="px-6 py-5 bg-gradient-to-br from-primary-50 via-primary-50/80 to-white border-b border-primary-100/50">
+      <div className="px-6 py-5 bg-gradient-to-br from-primary-50/60 via-primary-50/40 to-white border-b border-primary-100/50 backdrop-blur-sm">
         <div className="flex items-start justify-between">
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2 truncate" title={widget.query}>
-              {response.visualization.config.title || widget.query}
+            <h3 className="text-lg font-bold text-gray-900 mb-2 truncate group-hover:text-primary-700 transition-colors" title={widget.query}>
+              {response.visualization?.config?.title || widget.query}
             </h3>
             {response.answer && (
               <div className="text-sm text-gray-700 prose prose-sm max-w-none prose-strong:text-primary-700 prose-strong:font-semibold prose-p:my-1">
                 <ReactMarkdown>{response.answer}</ReactMarkdown>
               </div>
             )}
+            {/* Analyzing indicator - show when visualization is being generated */}
+            {response.query_id && 
+             response.visualization?.status === 'pending' && 
+             !response.visualization?.chart_js_config && (
+              <div className="mt-3 flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-primary-50 via-primary-50/80 to-primary-50 border border-primary-200/60 rounded-xl shadow-sm animate-pulse">
+                <div className="relative">
+                  <Loader2 size={18} className="animate-spin text-primary-600" />
+                  <div className="absolute inset-0 bg-primary-200/30 rounded-full blur-sm animate-ping"></div>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-primary-900">Analyzing data</p>
+                  <p className="text-xs text-primary-600 mt-0.5">Generating visualization...</p>
+                </div>
+                <Sparkles size={16} className="text-primary-500 animate-pulse" />
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1 ml-4 flex-shrink-0">
+            {/* View Visualization Button */}
+            {/* Show button if visualization might be available */}
+            {shouldShowButton && response.results.length > 0 && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  console.log('[ChartWidget] View Chart button clicked');
+                  handleViewVisualization();
+                }}
+                disabled={loadingViz}
+                className="group relative flex items-center gap-2.5 px-5 py-2.5 rounded-xl transition-all duration-300 font-semibold text-sm bg-gradient-to-r from-primary-500 via-primary-600 to-primary-500 text-white hover:from-primary-600 hover:via-primary-700 hover:to-primary-600 hover:scale-105 shadow-lg hover:shadow-xl disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:shadow-none overflow-hidden"
+                title="View Visualization"
+                type="button"
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
+                {loadingViz ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin relative z-10" />
+                    <span className="relative z-10">Loading...</span>
+                  </>
+                ) : (
+                  <>
+                    <TrendingUp size={18} className="relative z-10 group-hover:scale-110 transition-transform" />
+                    <span className="relative z-10">View Chart</span>
+                  </>
+                )}
+              </button>
+            )}
             <button
               onClick={() => setShowSQL(!showSQL)}
               className={`p-2.5 rounded-xl transition-all duration-200 ${
@@ -318,19 +511,34 @@ export default function ChartWidget({ widget, onRemove }: ChartWidgetProps) {
         </div>
         
         {/* Meta info badges */}
-        <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-full font-medium shadow-sm hover:shadow-md transition-shadow">
-            <BarChart3 size={12} />
-            {response.intent.replace(/_/g, ' ')}
+        <div className="mt-4 flex flex-wrap items-center gap-2.5">
+          <span className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-full text-xs font-semibold shadow-md hover:shadow-lg transition-all hover:scale-105">
+            <BarChart3 size={13} />
+            <span className="capitalize">{response.intent.replace(/_/g, ' ')}</span>
           </span>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-full text-gray-700 font-medium shadow-sm hover:bg-gray-100 transition-colors">
-            <Table size={12} />
-            {response.result_count} results
+          <span className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-white border border-gray-200 rounded-full text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 hover:border-gray-300 transition-all hover:scale-105">
+            <Table size={13} />
+            <span>{response.result_count} {response.result_count === 1 ? 'result' : 'results'}</span>
           </span>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-full text-gray-700 font-medium shadow-sm hover:bg-gray-100 transition-colors">
-            <Clock size={12} />
-            {(response.execution_time_ms / 1000).toFixed(2)}s
+          <span className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-white border border-gray-200 rounded-full text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 hover:border-gray-300 transition-all hover:scale-105">
+            <Clock size={13} />
+            <span>{(response.execution_time_ms / 1000).toFixed(2)}s</span>
           </span>
+          {/* Visualization status badge */}
+          {response.visualization?.status && response.visualization.status !== 'ready' && (
+            <span className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium shadow-sm transition-all ${
+              response.visualization.status === 'pending' 
+                ? 'bg-amber-50 border border-amber-200 text-amber-700'
+                : response.visualization.status === 'not_applicable'
+                ? 'bg-gray-50 border border-gray-200 text-gray-600'
+                : 'bg-red-50 border border-red-200 text-red-700'
+            }`}>
+              {response.visualization.status === 'pending' && <Loader2 size={13} className="animate-spin" />}
+              {response.visualization.status === 'not_applicable' && <AlertCircle size={13} />}
+              {response.visualization.status === 'error' && <AlertCircle size={13} />}
+              <span className="capitalize">{response.visualization.status.replace(/_/g, ' ')}</span>
+            </span>
+          )}
         </div>
       </div>
 
@@ -346,6 +554,32 @@ export default function ChartWidget({ widget, onRemove }: ChartWidgetProps) {
       {/* Content */}
       {expanded && (
         <div className="p-6">
+          {/* Visualization Status Messages */}
+          {vizError && (
+            <div className="mb-4 flex items-start gap-3 p-4 bg-gradient-to-r from-red-50 to-red-50/80 border border-red-200/60 rounded-xl shadow-sm animate-in fade-in slide-in-from-top-2">
+              <div className="flex-shrink-0 mt-0.5">
+                <AlertCircle size={18} className="text-red-600" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-red-900">Visualization Unavailable</p>
+                <p className="text-xs text-red-700 mt-1">{vizError}</p>
+              </div>
+            </div>
+          )}
+          
+          {/* Success indicator when visualization loads */}
+          {vizLoaded && response.visualization?.chart_js_config && (
+            <div className="mb-4 flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-green-50 via-emerald-50 to-green-50 border border-green-200/60 rounded-xl shadow-md animate-in fade-in slide-in-from-top-2">
+              <div className="flex-shrink-0">
+                <CheckCircle2 size={18} className="text-green-600 animate-in zoom-in duration-300" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-green-900">Visualization loaded successfully!</p>
+                <p className="text-xs text-green-700 mt-0.5">Your chart is ready to view</p>
+              </div>
+            </div>
+          )}
+          
           {/* Check if single metric first */}
           {isSingleMetric(response.results, response.columns) ? (
             renderMetrics()
@@ -354,14 +588,20 @@ export default function ChartWidget({ widget, onRemove }: ChartWidgetProps) {
           ) : chartData && response.results.length > 0 ? (
             <>
               {/* Show chart when available */}
-              <div className="h-80 mb-6">
-                {renderChart()}
+              <div className={`mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:shadow-md transition-all duration-500 ${
+                vizLoaded ? 'animate-in fade-in slide-in-from-bottom-4' : ''
+              }`}>
+                <div className="h-80">
+                  {renderChart()}
+                </div>
               </div>
               {/* Always show table below chart when results exist */}
               <div className="mt-6">
-                <div className="mb-3 flex items-center gap-2">
-                  <Table size={16} className="text-gray-600" />
-                  <h4 className="text-sm font-semibold text-gray-700">Data Table</h4>
+                <div className="mb-4 flex items-center gap-2.5 pb-2 border-b border-gray-200">
+                  <div className="p-1.5 bg-gray-100 rounded-lg">
+                    <Table size={16} className="text-gray-600" />
+                  </div>
+                  <h4 className="text-sm font-bold text-gray-800">Data Table</h4>
                 </div>
                 {renderTable()}
               </div>

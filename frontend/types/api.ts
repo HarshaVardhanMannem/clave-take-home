@@ -23,6 +23,7 @@ export enum VisualizationType {
   MULTI_SERIES = "multi_series",
   HEATMAP = "heatmap",
   METRIC = "metric",
+  NONE = "none",
 }
 
 export interface VisualizationConfig {
@@ -36,8 +37,10 @@ export interface VisualizationConfig {
 
 export interface VisualizationResponse {
   type: VisualizationType;
-  config: VisualizationConfig;
+  config?: VisualizationConfig;  // Optional - may not be set when visualization is pending
   chart_js_config?: Record<string, any>;
+  available?: boolean;  // Whether visualization is available to fetch
+  status?: string;  // Status: pending, ready, not_applicable, error
 }
 
 export interface QueryResponse {

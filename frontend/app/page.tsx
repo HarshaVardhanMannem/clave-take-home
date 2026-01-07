@@ -292,7 +292,7 @@ function Dashboard() {
             visualization: {
               type: item.visualization_type as VisualizationType,
               config: item.visualization_config,
-              chart_js_config: item.visualization_config.chart_js_config,
+              chart_js_config: item.visualization_config?.chart_js_config,
             },
             execution_time_ms: item.execution_time_ms,
             total_processing_time_ms: item.execution_time_ms,
@@ -402,6 +402,31 @@ function Dashboard() {
               )
             );
           },
+          onVisualizationAvailable: (vizAvailableData) => {
+            console.log('[Frontend] Visualization available for query_id:', vizAvailableData.query_id, 'status:', vizAvailableData.status);
+            // Mark widget as having visualization available (or not applicable)
+            setWidgets((prev) =>
+              prev.map((w) => {
+                // Match by query_id (more reliable than tempWidgetId)
+                if (w.response.query_id === vizAvailableData.query_id) {
+                  console.log('[Frontend] Updating widget visualization availability:', w.id);
+                  return {
+                    ...w,
+                    response: {
+                      ...w.response,
+                      visualization: {
+                        ...w.response.visualization,
+                        // Only set available to true if status is not 'not_applicable'
+                        available: vizAvailableData.status !== 'not_applicable',
+                        status: vizAvailableData.status,
+                      },
+                    },
+                  };
+                }
+                return w;
+              })
+            );
+          },
           onVisualization: (vizData) => {
             console.log('[Frontend] onVisualization called with:', vizData);
             // Update widget with visualization
@@ -416,6 +441,7 @@ function Dashboard() {
                           type: vizData.type as VisualizationType,
                           config: vizData.config,
                           chart_js_config: vizData.chart_js_config,
+                          available: true,
                         },
                       },
                     }
@@ -646,6 +672,29 @@ function Dashboard() {
                   key={widget.id}
                   widget={widget}
                   onRemove={handleRemoveWidget}
+                  onUpdate={(id, updates) => {
+                    console.log('[Page] onUpdate called:', { id, updates });
+                    setWidgets((prev) =>
+                      prev.map((w) => {
+                        if (w.id === id) {
+                          const updated = {
+                            ...w,
+                            response: {
+                              ...w.response,
+                              ...updates,
+                              // Properly merge visualization if it's being updated
+                              visualization: updates.visualization
+                                ? { ...w.response.visualization, ...updates.visualization }
+                                : w.response.visualization,
+                            },
+                          };
+                          console.log('[Page] Widget updated:', updated);
+                          return updated;
+                        }
+                        return w;
+                      })
+                    );
+                  }}
                 />
               ))}
             </div>

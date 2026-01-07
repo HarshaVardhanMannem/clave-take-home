@@ -152,6 +152,10 @@ export interface StreamCallbacks {
     execution_time_ms: number;
   }) => void;
   onAnswerChunk?: (chunk: string) => void;
+  onVisualizationAvailable?: (data: {
+    query_id: string;
+    status: string;
+  }) => void;
   onVisualization?: (data: {
     type: string;
     config: Record<string, any>;
@@ -220,6 +224,11 @@ export async function submitQueryStream(
             } else if (data.type === 'answer_chunk' && callbacks.onAnswerChunk) {
               console.log('[Stream] Calling onAnswerChunk callback, chunk:', data.chunk);
               callbacks.onAnswerChunk(data.chunk);
+            } else if (data.type === 'visualization_available' && callbacks.onVisualizationAvailable) {
+              console.log('[Stream] Visualization available event received, query_id:', data.data?.query_id, 'status:', data.data?.status);
+              callbacks.onVisualizationAvailable(data.data);
+            } else if (data.type === 'visualization_available') {
+              console.warn('[Stream] Visualization available event received but no callback registered');
             } else if (data.type === 'visualization' && callbacks.onVisualization) {
               console.log('[Stream] Calling onVisualization callback');
               callbacks.onVisualization(data.data);
@@ -253,6 +262,26 @@ export async function getExamples(): Promise<ExamplesResponse> {
 export async function healthCheck(): Promise<{ status: string; database_connected: boolean }> {
   const response = await apiClient.get('/api/health');
   return response.data;
+}
+
+export async function fetchVisualization(queryId: string): Promise<{
+  type: string;
+  config: Record<string, any>;
+  chart_js_config?: Record<string, any>;
+}> {
+  try {
+    const response = await apiClient.get(`/api/visualization/${queryId}`);
+    return response.data;
+  } catch (error: any) {
+    // Re-throw with more context for better error handling
+    if (error.response) {
+      // Include the response data in the error for the handler to use
+      error.response.data = error.response.data || {};
+      error.response.data.error_code = error.response.data.error_code || 'UNKNOWN_ERROR';
+      error.response.data.error_message = error.response.data.error_message || error.message;
+    }
+    throw error;
+  }
 }
 
 
