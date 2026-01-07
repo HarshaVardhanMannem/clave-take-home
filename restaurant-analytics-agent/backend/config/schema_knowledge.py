@@ -427,7 +427,7 @@ SCHEMA_KNOWLEDGE = {
     "important_rules": [
         "CRITICAL: Database only contains data from January 1-4, 2025. Use dates in this range.",
         "All *_cents columns in base tables must be divided by 100.0 for dollars",
-        "Views (v_*) already have values in dollars - do NOT divide",
+        "Views (mv_*) already have values in dollars - do NOT divide",
         "Always filter voided = FALSE on unified_orders (views already do this)",
         "DO NOT JOIN views with base tables - views already contain denormalized data",
         "When filtering locations, use location_code (DOWNTOWN, AIRPORT, MALL, UNIVERSITY) not location_name",
