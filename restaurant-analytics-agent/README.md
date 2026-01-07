@@ -142,18 +142,40 @@ pip install -r requirements.txt
 
 #### Step 6: Configure Environment Variables
 
-Create a `.env` file in the `restaurant-analytics-agent` directory (same level as `requirements.txt`).
+**All configuration values must be set in a `.env` file** in the `restaurant-analytics-agent` directory (same level as `requirements.txt`).
+
+**Quick Setup (Recommended):**
+
+Copy the example file and edit it with your values:
+
+**macOS/Linux:**
+```bash
+cp .env.example .env
+nano .env
+# or
+code .env  # if using VS Code
+```
+
+**Windows (PowerShell):**
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+**Windows (Command Prompt):**
+```cmd
+copy .env.example .env
+notepad .env
+```
+
+**Manual Setup:**
+
+If you prefer to create the file manually:
 
 **macOS/Linux:**
 ```bash
 touch .env
-```
-
-Then open it in your preferred editor:
-```bash
 nano .env
-# or
-code .env  # if using VS Code
 ```
 
 **Windows (PowerShell):**
@@ -168,27 +190,41 @@ type nul > .env
 notepad .env
 ```
 
-Add the following configuration to your `.env` file:
+**Required Environment Variables:**
+
+Your `.env` file must include the following **required** variables:
 
 ```env
-# Supabase Database Configuration
-# Replace YOUR_PASSWORD and YOUR_PROJECT with your actual Supabase credentials
-SUPABASE_DB_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+# Database Configuration (REQUIRED - choose one option)
+# Option 1: Full connection string (recommended)
+DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
 
-# NVIDIA API Configuration
-# Get your API key from: https://build.nvidia.com/
+# Option 2: Alternative format
+# SUPABASE_DB_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+
+# Option 3: Separate URL and password
+# SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+# SUPABASE_PASSWORD=YOUR_PASSWORD
+
+# NVIDIA API Configuration (REQUIRED)
 NVIDIA_API_KEY=your-nvidia-api-key-here
 NVIDIA_MODEL=ai-nemotron-3-nano-30b-a3b
+LLM_PROVIDER=nvidia
 
-# Server Configuration (usually no need to change)
+# Server Configuration (Optional - defaults shown)
 API_HOST=0.0.0.0
 API_PORT=8000
+
+# Optional: Supabase API Key (for Supabase API calls)
+SUPABASE_KEY=your-supabase-anon-key-here
 ```
 
 > **Important:** 
+> - **All values must be in `.env` file** - the application reads configuration from this file
 > - Replace `YOUR_PASSWORD` with your actual Supabase database password
-> - Replace `YOUR_PROJECT` with your Supabase project reference ID
+> - Replace `YOUR_PROJECT` with your Supabase project reference ID (e.g., `frwxepthvyqeeyftroab`)
 > - Get your NVIDIA API key from [NVIDIA Build](https://build.nvidia.com/)
+> - See `.env.example` for a complete template with all available options
 
 #### Step 7: Verify Installation
 

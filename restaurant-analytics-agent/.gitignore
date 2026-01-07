@@ -29,6 +29,8 @@ ENV/
 # Environment variables
 .env
 .env.local
+# Allow .env.example to be tracked (it's a template)
+!.env.example
 
 # Logs
 logs/
