@@ -9,6 +9,14 @@ I genuinely appreciate the effort your team put into designing such a realistic 
 
 Designing a system that performs well across all these perspectives required thoughtful trade-offs. I learned a great deal through this process and intentionally left room for future improvements to make the system fully production-ready over time.
 
+---
+
+## Quick Start
+
+For complete setup and installation instructions, including Supabase database configuration, see **[QUICK_START.md](QUICK_START.md)**.
+
+---
+
 ## Database Design & Data Cleaning
 
 When I first examined the provided data, it was messy and difficult to reason about directly. I used a JSON viewer to inspect the structure and understand the schema, which revealed multiple issues—including typos (as hinted) and inconsistencies that would make analytics unreliable if left unaddressed.
