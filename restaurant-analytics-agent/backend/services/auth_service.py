@@ -34,6 +34,7 @@ class AuthService:
     async def create_user(user_data: UserCreate) -> UserResponse | None:
         """
         Create a new user in the database.
+        Automatically initializes auth tables if they don't exist.
         
         Args:
             user_data: User registration data
@@ -42,14 +43,25 @@ class AuthService:
             Created user or None if email already exists
         """
         try:
-            # Check if user already exists
-            existing = await SupabasePool.execute_query(
-                "SELECT id FROM app_users WHERE email = $1",
-                user_data.email
-            )
-            if existing[0]:
-                logger.warning(f"User with email {user_data.email} already exists")
-                return None
+            # Try to check if user already exists (this will fail if table doesn't exist)
+            try:
+                existing, _ = await SupabasePool.execute_query(
+                    "SELECT id FROM app_users WHERE email = $1",
+                    user_data.email
+                )
+                if existing:
+                    logger.warning(f"User with email {user_data.email} already exists")
+                    return None
+            except Exception as table_error:
+                # Table doesn't exist, create it
+                error_msg = str(table_error).lower()
+                if "does not exist" in error_msg or "relation" in error_msg:
+                    logger.info("Auth tables not found, initializing...")
+                    from ..models.database_models import INIT_AUTH_TABLES_SQL
+                    await SupabasePool.execute_query(INIT_AUTH_TABLES_SQL)
+                    logger.info("Auth tables initialized successfully")
+                else:
+                    raise
             
             # Hash password
             hashed_password = get_password_hash(user_data.password)

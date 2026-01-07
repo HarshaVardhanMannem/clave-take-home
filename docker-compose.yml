@@ -9,18 +9,24 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Database Configuration
+      # Database Configuration - supports DATABASE_URL or SUPABASE_DB_URL
+      - DATABASE_URL=${DATABASE_URL}
       - SUPABASE_DB_URL=${SUPABASE_DB_URL}
       # OR use separate variables:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_PASSWORD=${SUPABASE_PASSWORD}
+      - SUPABASE_KEY=${SUPABASE_KEY}
       
       # LLM Provider
       - LLM_PROVIDER=${LLM_PROVIDER:-nvidia}
       
       # NVIDIA API
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
-      - NVIDIA_MODEL=${NVIDIA_MODEL:-ai-nemotron-3-nano-30b-a3b}
+      - NVIDIA_MODEL=${NVIDIA_MODEL:-nvidia/nemotron-3-nano-30b-a3b}
+      
+      # OpenAI API (optional)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL}
       
       
       # Server Settings
@@ -31,6 +37,11 @@ services:
       - MAX_RETRIES=${MAX_RETRIES:-2}
       - DB_POOL_MIN_SIZE=${DB_POOL_MIN_SIZE:-5}
       - DB_POOL_MAX_SIZE=${DB_POOL_MAX_SIZE:-20}
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health', timeout=5)"]
@@ -62,4 +73,7 @@ services:
 networks:
   restaurant-analytics-network:
     driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
 

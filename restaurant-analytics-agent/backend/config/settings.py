@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
 
     # Database - supports multiple naming conventions
-    supabase_db_url: str | None = None
+    database_url: str | None = None  # Primary: DATABASE_URL
+    supabase_db_url: str | None = None  # Alternative: SUPABASE_DB_URL
 
     # Alternative Supabase config (will be converted to db_url)
     supabase_url: str | None = None
@@ -60,6 +61,10 @@ class Settings(BaseSettings):
 
     def get_database_url(self) -> str:
         """Get the database connection URL, constructing it if necessary"""
+        # Check DATABASE_URL first (most common)
+        if self.database_url:
+            return self.database_url
+        
         # If full URL is provided, use it
         if self.supabase_db_url:
             return self.supabase_db_url
@@ -71,10 +76,10 @@ class Settings(BaseSettings):
             return f"postgresql://postgres:{self.supabase_password}@db.{project_ref}.supabase.co:5432/postgres"
 
         raise ValueError(
-            "Database URL not configured. Please set either:\n"
-            "  1. SUPABASE_DB_URL=postgresql://postgres:PASSWORD@db.PROJECT.supabase.co:5432/postgres\n"
-            "  OR\n"
-            "  2. SUPABASE_URL + SUPABASE_PASSWORD"
+            "Database URL not configured. Please set one of:\n"
+            "  1. DATABASE_URL=postgresql://postgres:PASSWORD@db.PROJECT.supabase.co:5432/postgres\n"
+            "  2. SUPABASE_DB_URL=postgresql://postgres:PASSWORD@db.PROJECT.supabase.co:5432/postgres\n"
+            "  3. SUPABASE_URL + SUPABASE_PASSWORD"
         )
 
 

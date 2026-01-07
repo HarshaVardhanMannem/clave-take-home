@@ -141,10 +141,32 @@ async def login(credentials: UserLogin):
     """
     Authenticate user and return JWT token.
     """
-    user = await AuthService.authenticate_user(
-        credentials.email,
-        credentials.password
-    )
+    try:
+        user = await AuthService.authenticate_user(
+            credentials.email,
+            credentials.password
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Login error: {error_msg}")
+        
+        # Check if it's a database/table error
+        if "does not exist" in error_msg.lower() or "relation" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database tables not initialized. Please register a new account first.",
+            )
+        elif "connection" in error_msg.lower() or "network" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection unavailable. Please try again later.",
+            )
+        else:
+            # Generic database error
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database error. Please try again later.",
+            )
     
     if not user:
         raise HTTPException(

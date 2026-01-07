@@ -56,8 +56,13 @@ async def lifespan(app: FastAPI):
     
     try:
         # Initialize database connection pool
-        await init_database()
-        logger.info("Database connection pool initialized")
+        try:
+            await init_database()
+            logger.info("Database connection pool initialized")
+        except Exception as e:
+            logger.warning(f"Database connection failed during startup: {e}")
+            logger.warning("Application will start, but database operations will fail until connection is established")
+            # Don't raise - allow app to start, connection will be retried on first use
         
         # Initialize agent runner (preloads LLM config)
         get_agent_runner()

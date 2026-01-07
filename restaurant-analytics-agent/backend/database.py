@@ -35,36 +35,36 @@ class SupabasePool:
 
             settings = get_settings()
 
+            logger.info("Connecting to Supabase PostgreSQL...")
+
+            # Get database URL (supports multiple config formats)
             try:
-                logger.info("Connecting to Supabase PostgreSQL...")
-
-                # Get database URL (supports multiple config formats)
                 db_url = settings.get_database_url()
-
-                cls.pool = await asyncpg.create_pool(
-                    dsn=db_url,
-                    ssl="require",  # Supabase requires SSL
-                    min_size=settings.db_pool_min_size,
-                    max_size=settings.db_pool_max_size,
-                    command_timeout=settings.db_command_timeout,
-                    # Connection health checks
-                    setup=cls._setup_connection,
-                )
-
-                logger.info(
-                    f"Connection pool created: "
-                    f"min={settings.db_pool_min_size}, max={settings.db_pool_max_size}"
-                )
-
-                # Test the connection
-                await cls._test_connection()
-
-            except asyncio.CancelledError:
-                logger.warning("Database connection cancelled during startup")
+                # Log connection info (mask password for security)
+                masked_url = db_url.split('@')[1] if '@' in db_url else '***'
+                logger.info(f"Connecting to database: postgresql://***@{masked_url}")
+            except ValueError as e:
+                logger.error(f"Database configuration error: {e}")
+                logger.error("Please set SUPABASE_DB_URL or SUPABASE_URL + SUPABASE_PASSWORD environment variables")
                 raise
-            except Exception as e:
-                logger.error(f"Failed to create connection pool: {e}")
-                raise
+
+            cls.pool = await asyncpg.create_pool(
+                dsn=db_url,
+                ssl="require",  # Supabase requires SSL
+                min_size=settings.db_pool_min_size,
+                max_size=settings.db_pool_max_size,
+                command_timeout=settings.db_command_timeout,
+                # Connection health checks
+                setup=cls._setup_connection,
+            )
+
+            logger.info(
+                f"Connection pool created: "
+                f"min={settings.db_pool_min_size}, max={settings.db_pool_max_size}"
+            )
+
+            # Test the connection
+            await cls._test_connection()
 
     @classmethod
     async def _setup_connection(cls, connection: asyncpg.Connection) -> None:
@@ -91,6 +91,17 @@ class SupabasePool:
                 logger.info("Connection pool closed")
 
     @classmethod
+    async def _ensure_connected(cls) -> None:
+        """Ensure database connection is established, retry if needed"""
+        if cls.pool is None:
+            logger.info("Database pool not initialized, attempting to connect...")
+            try:
+                await cls.connect()
+            except Exception as e:
+                logger.error(f"Failed to establish database connection: {e}")
+                raise RuntimeError(f"Database connection not available: {e}")
+
+    @classmethod
     async def execute_query(
         cls,
         sql: str,
@@ -108,8 +119,9 @@ class SupabasePool:
         Returns:
             Tuple of (results list, execution time in ms)
         """
+        # Ensure connection is established (lazy connection)
         if cls.pool is None:
-            raise RuntimeError("Database pool not initialized. Call connect() first.")
+            await cls._ensure_connected()
 
         settings = get_settings()
         timeout = timeout or settings.max_query_timeout
