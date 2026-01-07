@@ -22,6 +22,7 @@ services:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - NVIDIA_MODEL=${NVIDIA_MODEL:-ai-nemotron-3-nano-30b-a3b}
       
+      
       # Server Settings
       - API_HOST=0.0.0.0
       - API_PORT=8000
