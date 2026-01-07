@@ -5,21 +5,26 @@ Main entry point for the Restaurant Analytics Agent API
 
 import asyncio
 import logging
-import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from typing import Annotated
 
 from .config.settings import get_settings
 from .config.schema_knowledge import SCHEMA_KNOWLEDGE
 from .database import SupabasePool, init_database, close_database
 from .agent_framework import get_agent_runner
-from .agents.answer_and_viz_agent import answer_and_viz_agent
+from .agents.answer_agent import answer_agent
+from .agents.visualization_agent import visualization_agent, is_visualization_applicable
 from .visualization import generate_chart_config
 from .utils.formatters import format_results, get_result_columns
+from .utils.viz_cache import VisualizationCache
+from .utils.error_parser import parse_sql_error
+from .services.auth_service import QueryHistoryService
+from .models.database_models import QueryHistoryCreate
 
 from .models.requests import QueryRequest
 from .models.responses import (
@@ -33,6 +38,7 @@ from .models.responses import (
     HealthResponse
 )
 from .models.state import QueryIntent, VisualizationType
+from .routes.auth import get_current_user_optional
 
 # Configure logging
 logging.basicConfig(
@@ -113,7 +119,10 @@ app.include_router(auth_router)
 # ==================== Main Query Endpoint ====================
 
 @app.post("/api/query", response_model=None)
-async def process_query(request: QueryRequest):
+async def process_query(
+    request: QueryRequest,
+    authorization: Annotated[str | None, Header()] = None
+):
     """
     Process a natural language query about restaurant data.
     
@@ -132,6 +141,10 @@ async def process_query(request: QueryRequest):
     """
     query_id = str(uuid.uuid4())
     logger.info(f"[{query_id}] Processing query: {request.query[:100]}...")
+    
+    # Get current user if authenticated
+    current_user = await get_current_user_optional(authorization)
+    user_id = current_user.id if current_user else None
     
     # Debug: Log request fields
     request_dict = request.model_dump() if hasattr(request, 'model_dump') else {}
@@ -163,16 +176,13 @@ async def process_query(request: QueryRequest):
             return ErrorResponse(
                 success=False,
                 error_code="SQL_GENERATION_FAILED",
-                error_message="Failed to generate a valid SQL query",
-                details={
-                    "errors": result.get("sql_errors", []),
-                    "generated_sql": result.get("generated_sql", ""),
-                    "retries": result.get("retry_count", 0)
-                },
+                error_message="I couldn't understand your question. Could you try rephrasing it?",
+                details={},  # Don't expose technical details to restaurant managers
                 suggestions=[
-                    "Try rephrasing your question",
-                    "Be more specific about what data you want",
-                    "Check example queries for guidance"
+                    "Try asking your question more clearly",
+                    "Be more specific about what data you want to see",
+                    "Check example queries for guidance",
+                    "Ask about sales, revenue, products, locations, or orders"
                 ]
             )
         
@@ -184,8 +194,14 @@ async def process_query(request: QueryRequest):
             return ErrorResponse(
                 success=False,
                 error_code="NO_SQL_GENERATED",
-                error_message="Failed to generate SQL query",
-                details={"result": result}
+                error_message="I couldn't understand your question. Could you try rephrasing it?",
+                details={},  # Don't expose technical details
+                suggestions=[
+                    "Try asking your question more clearly",
+                    "Be more specific about what data you want to see",
+                    "Check example queries for guidance",
+                    "Ask about sales, revenue, products, locations, or orders"
+                ]
             )
         
         # Check if shutdown is in progress (e.g., during uvicorn reload)
@@ -194,34 +210,97 @@ async def process_query(request: QueryRequest):
             return ErrorResponse(
                 success=False,
                 error_code="SHUTDOWN_IN_PROGRESS",
-                error_message="Server is shutting down. Please retry your query.",
-                details={"sql": sql}
+                error_message="The system is temporarily unavailable. Please wait a moment and try again.",
+                details={},  # Don't expose technical details
+                suggestions=["Wait a few seconds and try again"]
             )
         
         logger.debug(f"[{query_id}] Executing SQL: {sql[:200]}...")
         
         settings = get_settings()
-        try:
-            query_results, exec_time = await SupabasePool.execute_query(
-                sql,
-                timeout=settings.max_query_timeout
-            )
-        except asyncio.CancelledError:
-            logger.warning(f"[{query_id}] Query execution cancelled (likely due to shutdown/reload)")
-            return ErrorResponse(
-                success=False,
-                error_code="QUERY_CANCELLED",
-                error_message="Query execution was cancelled. This may happen during server reload. Please retry.",
-                details={"sql": sql}
-            )
-        except Exception as e:
-            logger.error(f"[{query_id}] SQL execution failed: {e}")
-            return ErrorResponse(
-                success=False,
-                error_code="SQL_EXECUTION_FAILED",
-                error_message=f"Failed to execute query: {str(e)}",
-                details={"sql": sql}
-            )
+        max_execution_retries = 1  # Retry once if execution fails
+        execution_retry_count = 0
+        query_results = None
+        exec_time = 0.0
+        
+        while execution_retry_count <= max_execution_retries:
+            try:
+                query_results, exec_time = await SupabasePool.execute_query(
+                    sql,
+                    timeout=settings.max_query_timeout
+                )
+                # Success - break out of retry loop
+                break
+            except asyncio.CancelledError:
+                logger.warning(f"[{query_id}] Query execution cancelled (likely due to shutdown/reload)")
+                return ErrorResponse(
+                    success=False,
+                    error_code="QUERY_CANCELLED",
+                    error_message="Your request was interrupted. Please try again in a moment.",
+                    details={},  # Don't expose technical details
+                    suggestions=["Please wait a moment and try again"]
+                )
+            except Exception as e:
+                execution_retry_count += 1
+                logger.warning(f"[{query_id}] SQL execution failed (attempt {execution_retry_count}): {e}")
+                
+                # Try to regenerate SQL on first failure
+                if execution_retry_count == 1:
+                    logger.info(f"[{query_id}] Attempting to regenerate SQL after execution failure")
+                    try:
+                        # Update state with execution error for retry
+                        result["execution_error"] = str(e)
+                        result["retry_count"] = result.get("retry_count", 0)
+                        
+                        # Regenerate SQL with error context
+                        runner = get_agent_runner()
+                        retry_state = dict(result)
+                        retry_state["agent_trace"] = list(result.get("agent_trace", []))
+                        
+                        # Import here to avoid circular dependency
+                        from .agents.sql_generator import sql_generator_agent
+                        from .agents.sql_validator import sql_validator_agent
+                        
+                        # Regenerate SQL
+                        retry_state = sql_generator_agent(retry_state)
+                        retry_state = sql_validator_agent(retry_state)
+                        
+                        # If new SQL is valid and different, try executing it
+                        if retry_state.get("sql_validation_passed", False):
+                            new_sql = retry_state.get("generated_sql", "")
+                            if new_sql and new_sql != sql:
+                                logger.info(f"[{query_id}] Retrying with corrected SQL")
+                                sql = new_sql
+                                result = retry_state
+                                execution_retry_count = 0  # Reset counter for new SQL
+                                await asyncio.sleep(0.3)  # Small delay before retry
+                                continue  # Retry with new SQL
+                    except Exception as retry_error:
+                        logger.error(f"[{query_id}] Error during SQL regeneration: {retry_error}")
+                
+                # If we've exhausted retries, return error
+                if execution_retry_count > max_execution_retries:
+                    logger.error(f"[{query_id}] SQL execution failed after {execution_retry_count} attempts: {e}")
+                    
+                    # Parse error for user-friendly message
+                    user_message, suggestions = parse_sql_error(e)
+                    
+                    # Return user-friendly error (hide technical details from restaurant managers)
+                    return ErrorResponse(
+                        success=False,
+                        error_code="SQL_EXECUTION_FAILED",
+                        error_message=user_message,
+                        details={
+                            # Only include technical details in development/debug mode
+                            # For production, these should be logged server-side only
+                            "retry_attempts": execution_retry_count - 1
+                        },
+                        suggestions=suggestions
+                    )
+                else:
+                    # Log retry attempt and wait before retrying same SQL
+                    logger.info(f"[{query_id}] Retrying SQL execution ({execution_retry_count}/{max_execution_retries})")
+                    await asyncio.sleep(0.5)
         
         # Apply max results limit
         if request.max_results and len(query_results) > request.max_results:
@@ -269,14 +348,14 @@ async def process_query(request: QueryRequest):
                     logger.info(f"[{query_id}] Streaming: Yielding results event ({len(results_json)} bytes)")
                     yield f"data: {results_json}\n\n"
                     
-                    # Step 2: Generate answer and stream chunks
-                    answer_viz_state = dict(result)
-                    answer_viz_state["agent_trace"] = list(result.get("agent_trace", []))
+                    # Step 2: Generate answer and stream chunks immediately
+                    answer_state = dict(result)
+                    answer_state["agent_trace"] = list(result.get("agent_trace", []))
                     
-                    # Generate answer (this may take time)
-                    answer_viz_state = answer_and_viz_agent(answer_viz_state)
+                    # Generate answer only (decoupled from visualization)
+                    answer_state = answer_agent(answer_state)
                     
-                    generated_answer = answer_viz_state.get(
+                    generated_answer = answer_state.get(
                         "generated_answer",
                         f"Query executed successfully. Found {len(formatted_results)} result(s)."
                     )
@@ -300,64 +379,101 @@ async def process_query(request: QueryRequest):
                         }
                         yield f"data: {json.dumps(chunk_data)}\n\n"
                     
-                    # Step 3: Generate and send visualization
-                    viz_response = None
-                    if request.include_chart:
-                        viz_type = answer_viz_state.get("visualization_type", VisualizationType.TABLE)
-                        viz_config = answer_viz_state.get("visualization_config", {})
-                        
-                        logger.info(
-                            f"[{query_id}] Visualization type selected: {viz_type.value if hasattr(viz_type, 'value') else viz_type}"
-                        )
-                        
-                        # Update config with better defaults based on actual results
-                        if viz_config:
-                            default_titles = ["No Results", "No Results Found", "Result", "Query Results"]
-                            if not viz_config.get("title") or viz_config.get("title") in default_titles:
-                                viz_config["title"] = (
-                                    request.query[:60] + "..." if len(request.query) > 60 else request.query
-                                )
-                            
-                            if columns and not viz_config.get("x_axis"):
-                                viz_config["x_axis"] = columns[0]
-                            if len(columns) > 1 and not viz_config.get("y_axis"):
-                                viz_config["y_axis"] = columns[1]
-                        
-                        try:
-                            chart_config = generate_chart_config(formatted_results, viz_type, viz_config)
-                            logger.info(
-                                f"[{query_id}] Chart config generated: type={viz_type.value if hasattr(viz_type, 'value') else viz_type}, has_config={'data' in chart_config if chart_config else False}"
-                            )
-                        except Exception as e:
-                            logger.error(f"[{query_id}] Error generating chart config: {e}", exc_info=True)
-                            chart_config = {
-                                "type": "table",
-                                "data": {"columns": columns, "rows": formatted_results},
-                                "options": {"title": viz_config.get("title", "Query Results")},
-                            }
-                            viz_type = VisualizationType.TABLE
-                        
-                        viz_response = VisualizationResponse(
-                            type=viz_type,
-                            config=dict(viz_config) if viz_config else {},
-                            chart_js_config=chart_config,
-                        )
-                    else:
-                        viz_response = VisualizationResponse(type=VisualizationType.TABLE, config={})
+                    # Step 3: Trigger visualization generation asynchronously
+                    # Check if visualization is applicable
+                    viz_applicable = is_visualization_applicable(answer_state) if request.include_chart else False
+                    logger.info(f"[{query_id}] Visualization applicable: {viz_applicable}, include_chart: {request.include_chart}")
                     
-                    # Send visualization
-                    logger.info(f"[{query_id}] Streaming: Sending visualization")
-                    viz_data = {
-                        "type": "visualization",
-                        "data": {
-                            "type": viz_response.type.value if hasattr(viz_response.type, 'value') else str(viz_response.type),
-                            "config": viz_response.config,
-                            "chart_js_config": viz_response.chart_js_config,
+                    if viz_applicable:
+                        # Mark visualization as pending
+                        await VisualizationCache.set_status(query_id, "pending")
+                        
+                        # Trigger async visualization generation
+                        async def generate_visualization_async():
+                            try:
+                                logger.info(f"[{query_id}] Starting async visualization generation")
+                                viz_state = dict(answer_state)
+                                viz_state["agent_trace"] = list(answer_state.get("agent_trace", []))
+                                
+                                # Generate visualization
+                                viz_state = visualization_agent(viz_state)
+                                
+                                viz_type = viz_state.get("visualization_type", VisualizationType.TABLE)
+                                viz_config = viz_state.get("visualization_config", {})
+                                
+                                # Skip if visualization type is NONE
+                                if viz_type == VisualizationType.NONE:
+                                    logger.info(f"[{query_id}] Visualization not applicable, skipping")
+                                    await VisualizationCache.set_status(query_id, "not_applicable")
+                                    return
+                                
+                                logger.info(
+                                    f"[{query_id}] Visualization type selected: {viz_type.value if hasattr(viz_type, 'value') else viz_type}"
+                                )
+                                
+                                # Update config with better defaults based on actual results
+                                if viz_config:
+                                    default_titles = ["No Results", "No Results Found", "Result", "Query Results"]
+                                    if not viz_config.get("title") or viz_config.get("title") in default_titles:
+                                        viz_config["title"] = (
+                                            request.query[:60] + "..." if len(request.query) > 60 else request.query
+                                        )
+                                    
+                                    if columns and not viz_config.get("x_axis"):
+                                        viz_config["x_axis"] = columns[0]
+                                    if len(columns) > 1 and not viz_config.get("y_axis"):
+                                        viz_config["y_axis"] = columns[1]
+                                
+                                try:
+                                    chart_config = generate_chart_config(formatted_results, viz_type, viz_config)
+                                    logger.info(
+                                        f"[{query_id}] Chart config generated: type={viz_type.value if hasattr(viz_type, 'value') else viz_type}, has_config={'data' in chart_config if chart_config else False}"
+                                    )
+                                    
+                                    # Store in cache
+                                    await VisualizationCache.store(
+                                        query_id,
+                                        viz_type,
+                                        viz_config,
+                                        chart_config
+                                    )
+                                    await VisualizationCache.set_status(query_id, "ready")
+                                    logger.info(f"[{query_id}] Visualization stored in cache and ready")
+                                except Exception as e:
+                                    logger.error(f"[{query_id}] Error generating chart config: {e}", exc_info=True)
+                                    await VisualizationCache.set_status(query_id, "error")
+                            except Exception as e:
+                                logger.error(f"[{query_id}] Error in async visualization generation: {e}", exc_info=True)
+                                await VisualizationCache.set_status(query_id, "error")
+                        
+                        # Send visualization availability signal BEFORE starting async task
+                        viz_available_data = {
+                            "type": "visualization_available",
+                            "data": {
+                                "query_id": query_id,
+                                "status": "pending"
+                            }
                         }
-                    }
-                    yield f"data: {json.dumps(viz_data)}\n\n"
+                        logger.info(f"[{query_id}] Streaming: Sending visualization_available event (pending)")
+                        yield f"data: {json.dumps(viz_available_data)}\n\n"
+                        
+                        # Start async task (fire and forget) AFTER sending the event
+                        asyncio.create_task(generate_visualization_async())
+                    else:
+                        # Visualization not applicable - send event to notify frontend
+                        await VisualizationCache.set_status(query_id, "not_applicable")
+                        viz_not_applicable_data = {
+                            "type": "visualization_available",
+                            "data": {
+                                "query_id": query_id,
+                                "status": "not_applicable"
+                            }
+                        }
+                        logger.info(f"[{query_id}] Streaming: Sending visualization_available event (not_applicable)")
+                        yield f"data: {json.dumps(viz_not_applicable_data)}\n\n"
                     
                     # Step 4: Send complete response with all data
+                    # Note: visualization is not included here - it will be fetched separately when ready
                     complete_response = QueryResponse(
                         success=True,
                         query_id=query_id,
@@ -367,7 +483,7 @@ async def process_query(request: QueryRequest):
                         results=formatted_results,
                         result_count=len(formatted_results),
                         columns=columns,
-                        visualization=viz_response,
+                        visualization=VisualizationResponse(type=VisualizationType.TABLE, config={}),  # Placeholder
                         execution_time_ms=exec_time,
                         total_processing_time_ms=result.get("total_processing_time_ms", 0),
                         answer=generated_answer
@@ -380,6 +496,39 @@ async def process_query(request: QueryRequest):
                     }
                     yield f"data: {json.dumps(complete_data)}\n\n"
                     logger.info(f"[{query_id}] Streaming: Stream complete")
+                    
+                    # Save query to history asynchronously (don't block response)
+                    if user_id:
+                        try:
+                            # Get final visualization type and config from cache or use defaults
+                            viz_type = VisualizationType.TABLE
+                            viz_config = {}
+                            if viz_applicable:
+                                cached_viz = await VisualizationCache.get(query_id)
+                                if cached_viz:
+                                    viz_type = VisualizationType(cached_viz.get("type", "table"))
+                                    viz_config = cached_viz.get("config", {})
+                            
+                            query_history_data = QueryHistoryCreate(
+                                query_id=query_id,
+                                user_id=user_id,
+                                natural_query=request.query,
+                                generated_sql=sql,
+                                intent=result.get("query_intent", QueryIntent.UNKNOWN).value,
+                                execution_time_ms=exec_time,
+                                result_count=len(formatted_results),
+                                results_sample=formatted_results[:10],
+                                columns=columns,
+                                visualization_type=viz_type.value,
+                                visualization_config=viz_config,
+                                answer=generated_answer,
+                                success=True,
+                                error_message=None
+                            )
+                            # Save asynchronously without blocking
+                            asyncio.create_task(QueryHistoryService.save_query(query_history_data))
+                        except Exception as e:
+                            logger.error(f"[{query_id}] Error saving query to history: {e}", exc_info=True)
                 except Exception as e:
                     logger.error(f"[{query_id}] Error in streaming generator: {e}", exc_info=True)
                     error_data = {
@@ -401,16 +550,22 @@ async def process_query(request: QueryRequest):
         
         # Non-streaming path (original behavior)
         logger.info(f"[{query_id}] ⚠️ Using non-streaming path (stream_answer was False or not set)")
-        # Generate answer and visualization in one merged call (after SQL execution with actual results)
-        answer_viz_state = dict(result)
-        answer_viz_state["agent_trace"] = list(result.get("agent_trace", []))
+        # Generate answer first, then visualization
+        answer_state = dict(result)
+        answer_state["agent_trace"] = list(result.get("agent_trace", []))
         
-        # Always use merged agent - it handles both answer and visualization
-        # If include_chart is False, we'll just ignore the visualization part
-        answer_viz_state = answer_and_viz_agent(answer_viz_state)
+        # Generate answer
+        answer_state = answer_agent(answer_state)
+        
+        # Generate visualization if requested
+        if request.include_chart:
+            viz_state = dict(answer_state)
+            viz_state["agent_trace"] = list(answer_state.get("agent_trace", []))
+            viz_state = visualization_agent(viz_state)
+            answer_state = viz_state
         
         # Get generated answer
-        generated_answer = answer_viz_state.get(
+        generated_answer = answer_state.get(
             "generated_answer",
             f"Query executed successfully. Found {len(formatted_results)} result(s)."
         )
@@ -418,48 +573,53 @@ async def process_query(request: QueryRequest):
         # Process visualization results
         viz_response = None
         if request.include_chart:
-            viz_type = answer_viz_state.get("visualization_type", VisualizationType.TABLE)
-            viz_config = answer_viz_state.get("visualization_config", {})
+            viz_type = answer_state.get("visualization_type", VisualizationType.TABLE)
+            viz_config = answer_state.get("visualization_config", {})
             
-            logger.info(
-                f"[{query_id}] Visualization type selected: {viz_type.value if hasattr(viz_type, 'value') else viz_type}"
-            )
-            
-            # Update config with better defaults based on actual results
-            if viz_config:
-                # Set title from query if not set or if it's a default
-                default_titles = ["No Results", "No Results Found", "Result", "Query Results"]
-                if not viz_config.get("title") or viz_config.get("title") in default_titles:
-                    viz_config["title"] = (
-                        request.query[:60] + "..." if len(request.query) > 60 else request.query
-                    )
-                
-                # Auto-detect axes from columns if not set
-                if columns and not viz_config.get("x_axis"):
-                    viz_config["x_axis"] = columns[0]
-                if len(columns) > 1 and not viz_config.get("y_axis"):
-                    viz_config["y_axis"] = columns[1]
-            
-            try:
-                chart_config = generate_chart_config(formatted_results, viz_type, viz_config)
+            # Skip if visualization type is NONE
+            if viz_type == VisualizationType.NONE:
+                logger.info(f"[{query_id}] Visualization not applicable, using table")
+                viz_response = VisualizationResponse(type=VisualizationType.TABLE, config={})
+            else:
                 logger.info(
-                    f"[{query_id}] Chart config generated: type={viz_type.value if hasattr(viz_type, 'value') else viz_type}, has_config={'data' in chart_config if chart_config else False}"
+                    f"[{query_id}] Visualization type selected: {viz_type.value if hasattr(viz_type, 'value') else viz_type}"
                 )
-            except Exception as e:
-                logger.error(f"[{query_id}] Error generating chart config: {e}", exc_info=True)
-                # Fallback to table visualization on error
-                chart_config = {
-                    "type": "table",
-                    "data": {"columns": columns, "rows": formatted_results},
-                    "options": {"title": viz_config.get("title", "Query Results")},
-                }
-                viz_type = VisualizationType.TABLE
-            
-            viz_response = VisualizationResponse(
-                type=viz_type,
-                config=dict(viz_config) if viz_config else {},
-                chart_js_config=chart_config,
-            )
+                
+                # Update config with better defaults based on actual results
+                if viz_config:
+                    # Set title from query if not set or if it's a default
+                    default_titles = ["No Results", "No Results Found", "Result", "Query Results"]
+                    if not viz_config.get("title") or viz_config.get("title") in default_titles:
+                        viz_config["title"] = (
+                            request.query[:60] + "..." if len(request.query) > 60 else request.query
+                        )
+                    
+                    # Auto-detect axes from columns if not set
+                    if columns and not viz_config.get("x_axis"):
+                        viz_config["x_axis"] = columns[0]
+                    if len(columns) > 1 and not viz_config.get("y_axis"):
+                        viz_config["y_axis"] = columns[1]
+                
+                try:
+                    chart_config = generate_chart_config(formatted_results, viz_type, viz_config)
+                    logger.info(
+                        f"[{query_id}] Chart config generated: type={viz_type.value if hasattr(viz_type, 'value') else viz_type}, has_config={'data' in chart_config if chart_config else False}"
+                    )
+                except Exception as e:
+                    logger.error(f"[{query_id}] Error generating chart config: {e}", exc_info=True)
+                    # Fallback to table visualization on error
+                    chart_config = {
+                        "type": "table",
+                        "data": {"columns": columns, "rows": formatted_results},
+                        "options": {"title": viz_config.get("title", "Query Results")},
+                    }
+                    viz_type = VisualizationType.TABLE
+                
+                viz_response = VisualizationResponse(
+                    type=viz_type,
+                    config=dict(viz_config) if viz_config else {},
+                    chart_js_config=chart_config,
+                )
         else:
             viz_response = VisualizationResponse(type=VisualizationType.TABLE, config={})
         
@@ -467,6 +627,30 @@ async def process_query(request: QueryRequest):
             f"[{query_id}] Query successful: {len(formatted_results)} rows "
             f"in {exec_time:.2f}ms"
         )
+        
+        # Save query to history asynchronously (don't block response)
+        if user_id:
+            try:
+                query_history_data = QueryHistoryCreate(
+                    query_id=query_id,
+                    user_id=user_id,
+                    natural_query=request.query,
+                    generated_sql=sql,
+                    intent=result.get("query_intent", QueryIntent.UNKNOWN).value,
+                    execution_time_ms=exec_time,
+                    result_count=len(formatted_results),
+                    results_sample=formatted_results[:10],
+                    columns=columns,
+                    visualization_type=viz_response.type.value if viz_response else VisualizationType.TABLE.value,
+                    visualization_config=viz_response.config if viz_response else {},
+                    answer=generated_answer,
+                    success=True,
+                    error_message=None
+                )
+                # Save asynchronously without blocking
+                asyncio.create_task(QueryHistoryService.save_query(query_history_data))
+            except Exception as e:
+                logger.error(f"[{query_id}] Error saving query to history: {e}", exc_info=True)
         
         return QueryResponse(
             success=True,
@@ -485,11 +669,13 @@ async def process_query(request: QueryRequest):
         
     except TimeoutError as e:
         logger.error(f"[{query_id}] Query timeout: {e}")
+        user_message, suggestions = parse_sql_error(e)
         return ErrorResponse(
             success=False,
             error_code="QUERY_TIMEOUT",
-            error_message=str(e),
-            suggestions=["Try a simpler query", "Add more specific filters"]
+            error_message=user_message,
+            details={},  # Don't expose technical details
+            suggestions=suggestions
         )
         
     except Exception as e:
@@ -522,6 +708,74 @@ def _get_clarification_suggestions(result: dict) -> list:
         ])
     
     return suggestions[:3]
+
+
+# ==================== Visualization Endpoint ====================
+
+@app.get("/api/visualization/{query_id}", response_model=VisualizationResponse)
+async def get_visualization(query_id: str):
+    """
+    Fetch precomputed visualization for a query.
+    Returns visualization data if available, or error if not ready/not applicable.
+    """
+    logger.info(f"Fetching visualization for query_id: {query_id}")
+    
+    status = await VisualizationCache.get_status(query_id)
+    
+    if status == "not_applicable":
+        return JSONResponse(
+            status_code=404,
+            content={
+                "success": False,
+                "error_code": "VISUALIZATION_NOT_APPLICABLE",
+                "error_message": "A chart isn't available for this type of data"
+            }
+        )
+    
+    if status == "pending":
+        return JSONResponse(
+            status_code=202,
+            content={
+                "success": False,
+                "error_code": "VISUALIZATION_PENDING",
+                "error_message": "Visualization is still being generated",
+                "status": "pending"
+            }
+        )
+    
+    if status == "error":
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error_code": "VISUALIZATION_ERROR",
+                "error_message": "Error generating visualization"
+            }
+        )
+    
+    viz_data = await VisualizationCache.get(query_id)
+    
+    if not viz_data:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "success": False,
+                "error_code": "VISUALIZATION_NOT_FOUND",
+                "error_message": "Visualization not found or expired"
+            }
+        )
+    
+    # Convert to VisualizationResponse
+    try:
+        viz_type = VisualizationType(viz_data["type"])
+    except ValueError:
+        viz_type = VisualizationType.TABLE
+    
+    return VisualizationResponse(
+        type=viz_type,
+        config=viz_data.get("config", {}),
+        chart_js_config=viz_data.get("chart_js_config")
+    )
 
 
 # ==================== Schema & Examples Endpoints ====================

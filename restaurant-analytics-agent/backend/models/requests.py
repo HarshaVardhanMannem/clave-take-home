@@ -40,26 +40,6 @@ class QueryRequest(BaseModel):
     )
 
 
-class FeedbackRequest(BaseModel):
-    """Request model for query feedback"""
-
-    query_id: str = Field(..., description="ID of the query to provide feedback for")
-
-    feedback_type: str = Field(
-        ...,
-        pattern="^(correct|incorrect|partial)$",
-        description="Type of feedback: correct, incorrect, or partial",
-    )
-
-    correct_sql: Optional[str] = Field(
-        default=None, description="Correct SQL if the generated one was wrong"
-    )
-
-    comments: Optional[str] = Field(
-        default=None, max_length=500, description="Additional feedback comments"
-    )
-
-
 class ClarificationResponse(BaseModel):
     """Response model when user provides clarification"""
 

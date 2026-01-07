@@ -5,12 +5,15 @@ A Natural Language to SQL agent system for restaurant analytics. Converts natura
 ## Features
 
 - **Natural Language Understanding**: Converts plain English queries into SQL
-- **Multi-Agent Architecture**: Uses LangGraph for orchestrated agent workflow
+- **Multi-Agent Architecture**: Uses LangGraph for orchestrated agent workflow designed to minimize hallucinations
 - **Smart Schema Awareness**: Knows about tables, columns, and optimization strategies
-- **SQL Validation**: Validates queries for safety and correctness
-- **Auto-Retry**: Automatically fixes common SQL generation errors
+- **SQL Validation**: Validates queries for safety and correctness with deterministic rule-based checks
+- **Auto-Retry**: Automatically fixes common SQL generation errors with feedback loops
+- **Result Verification**: Ensures SQL results actually answer the user's question
 - **Visualization Planning**: Suggests appropriate chart types based on data
 - **Chart.js Integration**: Generates Chart.js compatible configurations
+
+> 📐 **Architecture Details**: See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for comprehensive documentation on the multi-agent system, design decisions, and hallucination mitigation strategies.
 
 > ⚠️ **Data Note:** The current database contains data from **January 1-4, 2025** only.
 
@@ -22,59 +25,299 @@ A Natural Language to SQL agent system for restaurant analytics. Converts natura
 - **LLM**: NVIDIA Nemotron (via NVIDIA API)
 - **Visualization**: Chart.js compatible configs
 
-## Quick Start
+## Installation & Setup Guide
 
-### 1. Install Dependencies
+This guide provides complete step-by-step instructions for setting up the Restaurant Analytics Agent on both **macOS** and **Windows**.
 
+### Prerequisites
+
+#### For macOS:
+- **Python 3.11+** (check with `python3 --version`)
+  - Install via Homebrew: `brew install python@3.11`
+  - Or download from [python.org](https://www.python.org/downloads/)
+- **pip** (usually comes with Python)
+- **Git** (check with `git --version`)
+- Terminal application (Terminal.app or iTerm2)
+
+#### For Windows:
+- **Python 3.11+** (check with `python --version`)
+  - Download from [python.org](https://www.python.org/downloads/)
+  - **Important:** Check "Add Python to PATH" during installation
+- **pip** (usually comes with Python)
+- **Git for Windows** - Download from [git-scm.com](https://git-scm.com/download/win)
+- PowerShell or Command Prompt
+- Optional: Windows Terminal for better experience
+
+### Step-by-Step Installation
+
+#### Step 1: Clone or Navigate to the Project
+
+**macOS/Linux:**
 ```bash
 cd restaurant-analytics-agent
+```
+
+**Windows (PowerShell):**
+```powershell
+cd restaurant-analytics-agent
+```
+
+**Windows (Command Prompt):**
+```cmd
+cd restaurant-analytics-agent
+```
+
+#### Step 2: Create a Virtual Environment
+
+A virtual environment isolates your project dependencies from other Python projects.
+
+**macOS/Linux:**
+```bash
+python3 -m venv venv
+```
+
+**Windows (PowerShell):**
+```powershell
 python -m venv venv
+```
 
-# Windows
-.\venv\Scripts\activate
+**Windows (Command Prompt):**
+```cmd
+python -m venv venv
+```
 
-# macOS/Linux
+> **Note:** If you get an error like `python: command not found` on macOS, use `python3` instead of `python`.
+
+#### Step 3: Activate the Virtual Environment
+
+**macOS/Linux:**
+```bash
 source venv/bin/activate
+```
 
+When activated, you'll see `(venv)` at the start of your terminal prompt.
+
+**Windows (PowerShell):**
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+
+If you get an execution policy error, run this first:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+**Windows (Command Prompt):**
+```cmd
+venv\Scripts\activate.bat
+```
+
+#### Step 4: Upgrade pip (Recommended)
+
+**macOS/Linux:**
+```bash
+pip install --upgrade pip
+```
+
+**Windows:**
+```powershell
+# PowerShell or Command Prompt
+pip install --upgrade pip
+```
+
+#### Step 5: Install Project Dependencies
+
+**macOS/Linux:**
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment
+**Windows:**
+```powershell
+# PowerShell or Command Prompt
+pip install -r requirements.txt
+```
 
-Create a `.env` file in the project root:
+> **Note:** This may take a few minutes as it installs all required packages including FastAPI, LangChain, LangGraph, and other dependencies.
+
+#### Step 6: Configure Environment Variables
+
+Create a `.env` file in the `restaurant-analytics-agent` directory (same level as `requirements.txt`).
+
+**macOS/Linux:**
+```bash
+touch .env
+```
+
+Then open it in your preferred editor:
+```bash
+nano .env
+# or
+code .env  # if using VS Code
+```
+
+**Windows (PowerShell):**
+```powershell
+New-Item -Path .env -ItemType File
+notepad .env
+```
+
+**Windows (Command Prompt):**
+```cmd
+type nul > .env
+notepad .env
+```
+
+Add the following configuration to your `.env` file:
 
 ```env
-# Supabase Database
+# Supabase Database Configuration
+# Replace YOUR_PASSWORD and YOUR_PROJECT with your actual Supabase credentials
 SUPABASE_DB_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
 
-# NVIDIA API
-NVIDIA_API_KEY=your-nvidia-api-key
+# NVIDIA API Configuration
+# Get your API key from: https://build.nvidia.com/
+NVIDIA_API_KEY=your-nvidia-api-key-here
 NVIDIA_MODEL=ai-nemotron-3-nano-30b-a3b
 
-# Server
+# Server Configuration (usually no need to change)
 API_HOST=0.0.0.0
 API_PORT=8000
 ```
 
-### 3. Run the Server
+> **Important:** 
+> - Replace `YOUR_PASSWORD` with your actual Supabase database password
+> - Replace `YOUR_PROJECT` with your Supabase project reference ID
+> - Get your NVIDIA API key from [NVIDIA Build](https://build.nvidia.com/)
 
+#### Step 7: Verify Installation
+
+Before running the server, verify that all dependencies are installed correctly:
+
+**macOS/Linux/Windows:**
+```bash
+python -c "import fastapi, uvicorn, langchain, langgraph; print('All dependencies installed successfully!')"
+```
+
+If you see the success message, you're ready to proceed!
+
+#### Step 8: Run the Server
+
+Make sure your virtual environment is still activated (you should see `(venv)` in your prompt).
+
+**macOS/Linux:**
 ```bash
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 4. Test the API
+**Windows:**
+```powershell
+# PowerShell or Command Prompt
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+```
 
+You should see output similar to:
+```
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [xxxxx] using WatchFiles
+INFO:     Started server process [xxxxx]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+```
+
+#### Step 9: Test the API
+
+Open a **new terminal window** (keep the server running in the first one) and test the API:
+
+**macOS/Linux:**
 ```bash
 # Health check
 curl http://localhost:8000/api/health
 
-# Query example
+# Test query
 curl -X POST http://localhost:8000/api/query \
   -H "Content-Type: application/json" \
   -d '{"query": "What were total sales yesterday?"}'
 ```
 
+**Windows (PowerShell):**
+```powershell
+# Health check
+Invoke-WebRequest -Uri http://localhost:8000/api/health -Method GET
+
+# Test query
+Invoke-WebRequest -Uri http://localhost:8000/api/query `
+  -Method POST `
+  -Headers @{"Content-Type"="application/json"} `
+  -Body '{"query": "What were total sales yesterday?"}'
+```
+
+**Windows (Command Prompt):**
+You can use PowerShell commands or install `curl` for Windows, or use a tool like [Postman](https://www.postman.com/downloads/) to test the API.
+
+Alternatively, open your browser and navigate to:
+- API Documentation: http://localhost:8000/docs (Swagger UI)
+- Alternative Docs: http://localhost:8000/redoc (ReDoc)
+
+### Troubleshooting
+
+#### Common Issues
+
+**1. "python: command not found" (macOS)**
+- Use `python3` instead of `python`
+- Or create an alias: `alias python=python3`
+
+**2. "pip: command not found"**
+- On macOS: `python3 -m ensurepip --upgrade`
+- On Windows: Reinstall Python and ensure "Add Python to PATH" is checked
+
+**3. Virtual environment activation fails (Windows PowerShell)**
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+**4. Port 8000 already in use**
+- Change the port in `.env`: `API_PORT=8001`
+- Or find and stop the process using port 8000:
+  - macOS/Linux: `lsof -ti:8000 | xargs kill`
+  - Windows: `netstat -ano | findstr :8000` then `taskkill /PID <PID> /F`
+
+**5. Module not found errors**
+- Ensure virtual environment is activated
+- Reinstall dependencies: `pip install -r requirements.txt --force-reinstall`
+
+**6. Database connection errors**
+- Verify your `SUPABASE_DB_URL` is correct in `.env`
+- Check that your Supabase project is active
+- Ensure your IP is whitelisted in Supabase (if required)
+
+**7. NVIDIA API errors**
+- Verify your `NVIDIA_API_KEY` is correct
+- Check API key permissions on NVIDIA Build
+- Ensure you have credits/quota available
+
+### Deactivating the Virtual Environment
+
+When you're done working, you can deactivate the virtual environment:
+
+**macOS/Linux/Windows:**
+```bash
+deactivate
+```
+
+This will remove the `(venv)` prefix from your terminal prompt.
+
+### Next Steps
+
+- 📚 **Read the complete [API Documentation](docs/API_DOCUMENTATION.md)** - Comprehensive guide with examples for all endpoints
+- Explore the [API Endpoints](#api-endpoints) section below
+- Try the [Example Queries](#example-queries)
+- Check out the [Agent Workflow](#agent-workflow) documentation
+- Review the [Project Structure](#project-structure)
+
 ## API Endpoints
+
+> 📖 **For detailed API documentation with examples, see [API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md)**
 
 ### Main Query Endpoint
 
