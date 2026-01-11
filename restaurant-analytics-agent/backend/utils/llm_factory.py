@@ -1,6 +1,6 @@
 """
 LLM Factory
-Creates LLM instances for different providers (NVIDIA, Grok/XAI)
+Creates LLM instances for the supported provider (NVIDIA).
 """
 
 import logging
@@ -31,27 +31,22 @@ def create_llm(
         enable_thinking: Enable thinking mode (NVIDIA only)
         
     Returns:
-        BaseChatModel instance (NVIDIA or Grok)
+        BaseChatModel instance (NVIDIA)
     """
     settings = get_settings()
-    provider = settings.llm_provider.lower()
-    
-    if provider == "grok":
-        return _create_grok_llm(
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-        )
-    elif provider == "nvidia":
-        return _create_nvidia_llm(
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-            reasoning_budget=reasoning_budget,
-            enable_thinking=enable_thinking,
-        )
-    else:
-        raise ValueError(f"Unknown LLM provider: {provider}. Use 'nvidia' or 'grok'")
+    # Only NVIDIA provider is supported. If LLM_PROVIDER is set to something else,
+    # fall back to NVIDIA and log a warning.
+    provider = getattr(settings, "llm_provider", "nvidia")
+    if provider.lower() != "nvidia":
+        logger.warning("LLM provider '%s' is not supported; falling back to 'nvidia'", provider)
+
+    return _create_nvidia_llm(
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+        reasoning_budget=reasoning_budget,
+        enable_thinking=enable_thinking,
+    )
 
 
 def _create_nvidia_llm(
@@ -91,38 +86,5 @@ def _create_nvidia_llm(
     return ChatNVIDIA(**llm_kwargs)
 
 
-def _create_grok_llm(
-    temperature: float,
-    top_p: float,
-    max_tokens: int,
-) -> BaseChatModel:
-    """Create Grok/XAI LLM instance using OpenAI-compatible API"""
-    try:
-        from langchain_openai import ChatOpenAI
-    except ImportError:
-        raise ImportError(
-            "langchain-openai is required for Grok support. "
-            "Install it with: pip install langchain-openai"
-        )
-    
-    settings = get_settings()
-    
-    if not settings.grok_api_key:
-        raise ValueError("GROK_API_KEY is required when llm_provider='grok'")
-    
-    # xAI API is OpenAI-compatible, so we can use ChatOpenAI
-    # Model name for Grok - adjust based on actual xAI API model names
-    model = settings.grok_model
-    
-    logger.info(f"Creating Grok LLM: model={model}, temperature={temperature}, base_url={settings.grok_base_url}")
-    
-    # top_p should be in model_kwargs to avoid warnings
-    return ChatOpenAI(
-        model=model,
-        api_key=settings.grok_api_key,
-        base_url=settings.grok_base_url,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        model_kwargs={"top_p": top_p},
-    )
+
 

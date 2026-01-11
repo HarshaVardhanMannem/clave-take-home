@@ -515,8 +515,7 @@ def intent_and_schema_agent(state: AgentState) -> AgentState:
         # Check for API errors (403, 401, etc.)
         if "403" in error_msg or "Forbidden" in error_msg:
             state["clarification_question"] = (
-                "API access denied. Please check your API key and account credits. "
-                "If using Grok, ensure your account has available credits."
+                "API access denied. Please check your API key and account credits."
             )
         elif "401" in error_msg or "Unauthorized" in error_msg:
             state["clarification_question"] = (
