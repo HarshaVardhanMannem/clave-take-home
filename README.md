@@ -17,6 +17,40 @@ For complete setup and installation instructions, including Supabase database co
 
 ---
 
+## 🚀 Live Demo & Architecture
+
+### Live Application
+
+The application is currently deployed and available at: **http://3.142.252.151:3000/**
+
+> [!NOTE]
+> **Expected Model Latency:** Due to NVIDIA free tier limitations, the model is shared among a pool of users. This may result in higher latency than typical production systems. The free tier API is used for demonstration purposes, and response times may vary based on concurrent usage.
+
+### System Architecture
+
+The Restaurant Analytics Agent uses a sophisticated multi-agent architecture to ensure reliable and accurate query processing:
+
+![System Architecture](docs/architecture_diagram.png)
+
+**Key Components:**
+
+* **Frontend (Next.js 15):** Modern web interface with streaming response support for improved user experience
+* **Backend (FastAPI):** High-performance Python backend with async support
+* **Multi-Agent System (LangGraph):** Orchestrates four specialized agents:
+  1. **Intent & Schema Analyzer** - Identifies user intent and selects relevant database schema
+  2. **SQL Generator** - Creates PostgreSQL queries based on validated schema
+  3. **SQL Validator** - 100% rule-based validation ensures zero unsafe queries
+  4. **Result Validator** - Verifies results match the user's question
+* **Post-Processing:**
+  * **Answer Generator** - Creates natural language summaries
+  * **Visualization Planner** - Suggests appropriate chart types
+* **Database (Supabase PostgreSQL):** Managed database with materialized views for optimized performance
+* **LLM (NVIDIA Nemotron 3 Nano 30B):** Free-tier mixture-of-experts model for reasoning
+
+For detailed architectural documentation, see [restaurant-analytics-agent/docs/ARCHITECTURE.md](restaurant-analytics-agent/docs/ARCHITECTURE.md).
+
+---
+
 ## Database Design & Data Cleaning
 
 When I first examined the provided data, it was messy and difficult to reason about directly. I used a JSON viewer to inspect the structure and understand the schema, which revealed multiple issues—including typos (as hinted) and inconsistencies that would make analytics unreliable if left unaddressed.
