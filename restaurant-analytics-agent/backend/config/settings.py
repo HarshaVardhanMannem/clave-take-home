@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     nvidia_model: str = "ai-nemotron-3-nano-30b-a3b"
     nvidia_model_fast: str = "ai-nemotron-3-nano-30b-a3b"  # Same model for all agents
 
+    # LLM provider selection (env var: LLM_PROVIDER). Defaults to 'nvidia'.
+    llm_provider: str = "nvidia"
+
+    # Note: only NVIDIA LLM provider is supported in this deployment.
+    # Grok/xAI settings removed to simplify supported providers.
+
     # JWT Authentication
     jwt_secret_key: str | None = None  # Optional - will derive from nvidia_api_key if not set
     jwt_access_token_expire_minutes: int = 60 * 24  # 24 hours
